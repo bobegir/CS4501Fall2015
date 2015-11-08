@@ -8,6 +8,10 @@ https://docs.djangoproject.com/en/1.7/howto/deployment/wsgi/
 """
 
 import os
+import sys
+sys.path.append('/app/h1/')
+sys.path.append('/app/h1/h1/')
+sys.path.append('/app/h1/first/')
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "h1.settings")
 
 from django.core.wsgi import get_wsgi_application

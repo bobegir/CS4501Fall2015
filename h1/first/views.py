@@ -1,9 +1,22 @@
 from django.shortcuts import render
 from django.http import HttpResponse
 from django.http import JsonResponse
+from django.contrib.auth.hashers import make_password, check_password
 
 from first import models
 from django.core import serializers
+from datetime import datetime, timedelta
+
+import os
+import base64
+
+import json
+
+def model_to_json(model):
+	data = serializers.serialize('json',[model,])
+	struct = json.loads(data)
+	data = json.dumps(struct[0])
+	return data
 
 def index(request):
     return HttpResponse("Hello World!")
@@ -97,20 +110,22 @@ def add_user(request):
         new_user.last = request.POST['last']
     if 'email' in request.POST:
         new_user.email = request.POST['email']
-    if 'password' in request.POST: #TODO: hash the pw before saving
-        new_user.password = request.POST['password']
+    if 'password' in request.POST:
+        new_user.password = make_password(request.POST['password'])
     if 'city' in request.POST:
         new_user.city = request.POST['city']
     if 'state' in request.POST:
         new_user.state = request.POST['state']
     if 'phone' in request.POST:
-        new_user.phone = request.POST['phone']
+        new_user.phone_number = request.POST['phone']
     if 'payment_type' in request.POST:
-        new_user.payment = request.POST['payment_type']
+        new_user.payment_type = request.POST['payment_type']
     if 'gender' in request.POST:
-        new_user.gender = request.POST['gender'']
+        new_user.gender = request.POST['gender']
     if 'age' in request.POST:
         new_user.age = request.POST['age']
+    if 'vehicle' in request.POST:
+        new_user.vehicle = models.Vehicle.objects.get(pk=request.POST['vehicle'])
     new_user.save()
     return JsonResponse({'ok':True, 'log': 'User Created'})
 
@@ -136,7 +151,7 @@ def update_user(request, user):
     if 'payment_type' in request.POST:
         this_user.payment = request.POST['payment_type']
     if 'gender' in request.POST:
-        this_user.gender = request.POST['gender'']
+        this_user.gender = request.POST['gender']
     if 'age' in request.POST:
         this_user.age = request.POST['age']
     this_user.save()
@@ -150,7 +165,7 @@ def update_password(request, user):
     except:
         return JsonResponse({'ok': False, 'error': 'Failed to find user id ' + user})
     if 'password' in request.POST:
-        recover_user.password = request.POST['password']
+        recover_user.password = make_password(request.POST['password'])
     return JsonResponse({'ok':True, 'log': 'Password Changed'})
 
 def get_user(request, user):
@@ -175,30 +190,68 @@ def deactivate_user(request, user):
         deactivate_user.save()
     return JsonResponse({'ok':True, 'log': 'User Account Deactivated'})
 
-def login(request): 
+def get_auth(request): 
     if request.method != 'POST':
         return JsonResponse({'ok': False, 'error': 'Wrong request type, should be POST'})
     username = request.POST['username']
-    password = request.POST['password'] #TODO: hashing
-    user = authenticate(username=username, password=password)
-    if user is not None:
-        if user.active:
-            return JsonResponse({'ok': True, 'log': 'Login successful'})
-        else: 
-            return JsonResponse({'ok': False, 'error': 'User account was deactivated'})
+    password = request.POST['password']
+    try:
+        this_user = models.User.objects.get(username=username)
+        hashed_pass = this_user.password
+    except:
+        return JsonResponse({'ok': False, 'error': 'User account was not found'})
+    check = check_password(password,hashed_pass)
+    if check:
+        models.AuthTable.objects.filter(user_id=this_user).delete()
+        new_auth = models.AuthTable()
+        new_auth.user_id = this_user
+        new_auth.date_created = datetime.now()
+        new_auth.authenticator = base64.b64encode(os.urandom(32)).decode('utf-8')
+        new_auth.save()
+        return JsonResponse({'ok': True, 'log': 'Login successful', 'auth': new_auth.authenticator})
     else:
-        return JsonResponse({'ok': False, 'error': 'Username or password was incorrect'})
+        return JsonResponse({'ok': False, 'error': 'Password was incorrect'})
 
-def create_ride(request, user, car):
+def check_auth(auth):
+    try:
+        this_auth = models.AuthTable.objects.get(authenticator=auth)
+    except:
+        return False
+    #Should we return the user and stuff too? Or just let that one be?
+    return True
+
+def is_auth(request):
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'error': 'Wrong request type, should be POST'})
+    auth = request.POST['auth']
+    time_limit = datetime.now() - timedelta(hours=6)
+    models.AuthTable.objects.filter(date_created__lt=time_limit).delete()
+    if check_auth(auth):
+        return JsonResponse({'ok': True})
+    else:
+        return JsonResponse({'ok': False, 'error': 'Invalid authenticator'})
+
+def revoke_auth(request):
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'error': 'Wrong request type, should be POST'})
+    auth = request.POST['auth']
+    try:
+        this_auth = models.AuthTable.objects.get(authenticator=auth)
+    except:
+        return JsonResponse({'ok': True, 'log': 'Auth not found'})
+    this_auth.delete()
+    time_limit = datetime.now() - timedelta(hours=6)
+    models.AuthTable.objects.filter(date_created__lt=time_limit).delete()
+    return JsonResponse({'ok': True, 'log': 'Auth removed'})
+
+def create_ride(request):
     if request.method != 'POST':
         return JsonResponse({'ok': False, 'error': 'Wrong request type, should be POST'})
     new_ride = models.Ride()    
-    new_ride.car = car
-    new_ride.driver = user
     if 'leave_time' in request.POST:
-        new_ride.leave_time = request.POST['leave_time']
+        new_ride.leave_time = datetime.strptime(request.POST['leave_time'], '%H:%M')
     if 'arrive_time' in request.POST:
-        new_ride.arrive_time = request.POST['arrive_time']
+        new_ride.arrive_time = datetime.strptime(request.POST['arrive_time'], '%H:%M')
     if 'destination' in request.POST:
         new_ride.destination = request.POST['destination']
     if 'start' in request.POST:
@@ -207,13 +260,17 @@ def create_ride(request, user, car):
         new_ride.comments = request.POST['comments']
     if 'max_miles_offroute' in request.POST:
         new_ride.max_miles_offroute = request.POST['max_miles_offroute']
+    if 'vehicle' in request.POST:
+        new_ride.car = models.Vehicle.objects.get(pk=request.POST['vehicle'])
+    if 'driver' in request.POST:
+        new_ride.driver = models.User.objects.get(pk=request.POST['driver'])
     new_ride.save()
     return JsonResponse({'ok':True, 'log': 'Ride Created'})
         
 def ride_list(request):
     rides = models.Ride.objects.all()
-    formatted = [str(ride.driver) + str(ride.make) + str(ride.model) + '\n' for ride in rides]
-    return JsonResponse(serializers.serialize("json", models.Vehicle.objects.all()),safe=False)
+    formatted = [model_to_json(ride) for ride in rides]
+    return JsonResponse({"ok": True, "ride": formatted})
     
 def update_ride(request, ride):
     if request.method != 'POST':
@@ -250,11 +307,11 @@ def get_ride(request, ride):
 def deactivate_ride(request, ride):
     if request.method != 'POST':
             return JsonResponse({'ok': False, 'error': 'Wrong request type, should be POST'})
-        if 'deactivate' in request.POST:
-            try:
-                deactivate_ride = models.User.objects.get(pk=ride)
-            except:
-                return JsonResponse({'ok': False, 'error': 'Failed to find ride id' + user})
-            deactivate_ride.active = False
-            deactivate_ride.save()
-        return JsonResponse({'ok':True, 'log': 'Ride Deactivated'})
+    if 'deactivate' in request.POST:
+        try:
+            deactivate_ride = models.User.objects.get(pk=ride)
+        except:
+            return JsonResponse({'ok': False, 'error': 'Failed to find ride id' + user})
+        deactivate_ride.active = False
+        deactivate_ride.save()
+    return JsonResponse({'ok':True, 'log': 'Ride Deactivated'})

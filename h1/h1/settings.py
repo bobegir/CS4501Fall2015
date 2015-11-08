@@ -24,6 +24,8 @@ DEBUG = True
 
 TEMPLATE_DEBUG = True
 
+TEMPLATE_DIRS = (os.path.join(BASE_DIR, 'h1/templates'),)
+
 ALLOWED_HOSTS = []
 
 
@@ -37,6 +39,8 @@ INSTALLED_APPS = (
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'first',
+    'second',
+    'third',
 )
 
 MIDDLEWARE_CLASSES = (
