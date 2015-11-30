@@ -48,6 +48,9 @@ def add_vehicle(request):
     if 'accomodations' in request.POST:
         new_car.accomodations = request.POST['accomodations']
     new_car.save()
+    user = models.User.objects.get(username=request.POST['username'])
+    user.vehicle = models.Vehicle.objects.latest('pk')
+    user.save()
     return JsonResponse({'ok':True, 'log': 'Added vehicle'})
 
 def car_list(request):
@@ -62,7 +65,7 @@ def get_car(request, car):
         v = models.Vehicle.objects.get(pk=car)
     except models.Vehicle.DoesNotExist:
         return JsonResponse({'ok': False, 'error': 'Failed to find car id ' + car})
-    ret_val = serializers.serialize('json',[v,])
+    ret_val = model_to_json(v)
     return JsonResponse({'ok':True,'car':ret_val})
 
 def update_car(request, car):
@@ -124,8 +127,6 @@ def add_user(request):
         new_user.gender = request.POST['gender']
     if 'age' in request.POST:
         new_user.age = request.POST['age']
-    if 'vehicle' in request.POST:
-        new_user.vehicle = models.Vehicle.objects.get(pk=request.POST['vehicle'])
     new_user.save()
     return JsonResponse({'ok':True, 'log': 'User Created'})
 
@@ -175,7 +176,18 @@ def get_user(request, user):
         this_user = models.User.objects.get(pk=user)
     except:
         return JsonResponse({'ok': False, 'error': 'Failed to find user id ' + user})
-    ret_val = serializers.serialize('json',[this_user,])
+    ret_val = model_to_json(this_user)
+    return JsonResponse({'ok': True,'user': ret_val})
+
+def get_user_by_name(request):
+    if request.method != 'GET':
+        return JsonResponse({'ok': False, 'error': 'Wrong request type, should be GET'})
+    user = request.GET['user']
+    try:
+        this_user = models.User.objects.get(username=user)
+    except:
+        return JsonResponse({'ok': False, 'error': 'Failed to find user ' + user})
+    ret_val = model_to_json(this_user)
     return JsonResponse({'ok': True,'user': ret_val})
         
 def deactivate_user(request, user):
@@ -227,7 +239,8 @@ def is_auth(request):
     time_limit = datetime.now() - timedelta(hours=6)
     models.AuthTable.objects.filter(date_created__lt=time_limit).delete()
     if check_auth(auth):
-        return JsonResponse({'ok': True})
+        auth_obj = models.AuthTable.objects.get(authenticator=auth)
+        return JsonResponse({'ok': True, 'username': auth_obj.user_id.username})
     else:
         return JsonResponse({'ok': False, 'error': 'Invalid authenticator'})
 
@@ -260,17 +273,22 @@ def create_ride(request):
         new_ride.comments = request.POST['comments']
     if 'max_miles_offroute' in request.POST:
         new_ride.max_miles_offroute = request.POST['max_miles_offroute']
-    if 'vehicle' in request.POST:
-        new_ride.car = models.Vehicle.objects.get(pk=request.POST['vehicle'])
-    if 'driver' in request.POST:
-        new_ride.driver = models.User.objects.get(pk=request.POST['driver'])
+    user = models.User.objects.get(username=request.POST['username'])
+    vehicle = user.vehicle
+    new_ride.driver = user
+    new_ride.car = vehicle
     new_ride.save()
-    return JsonResponse({'ok':True, 'log': 'Ride Created'})
+    return JsonResponse({'ok':True, 'log': 'Ride Created', 'id': new_ride.pk})
         
 def ride_list(request):
     rides = models.Ride.objects.all()
     formatted = [model_to_json(ride) for ride in rides]
-    return JsonResponse({"ok": True, "ride": formatted})
+    return JsonResponse({'ok': True, 'ride': formatted})
+
+def active_ride_list(request):
+    rides = models.Ride.objects.filter(active=True)
+    formatted = [model_to_json(ride) for ride in rides]
+    return JsonResponse({'ok': True, 'ride': formatted})
     
 def update_ride(request, ride):
     if request.method != 'POST':

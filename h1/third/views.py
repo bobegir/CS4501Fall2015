@@ -4,7 +4,7 @@ from django.template.loader import get_template
 from django.http import HttpResponse, HttpResponseRedirect
 from django.http import JsonResponse
 from django import forms
-from .forms import LoginForm, CreateVehicle, CreateUser
+from .forms import LoginForm, CreateVehicle, CreateUser, CreateRide
 import json
 import requests
 
@@ -17,17 +17,11 @@ def custom_processor(request):
     }
 
 def view_normal(request):
-    return render_to_response("main.html", {"ID": "1",
-	"Driver":"Elon Musk",
-	"SPlace": "Charlottesville, VA",
-	"EPlace": "Fairfax, VA",
-	"DTime": "9:00am",
-	"ETA": "11:00am",
-	"DetourMiles": "20 Mi",
-	"Seats": "3",
-	"SeatCost": "$10",
-	},
-    context_instance=RequestContext(request, processors=[custom_processor]))
+    r = requests.get('http://exp-api:8000/exp/home_detail/')
+    ok = json.loads(r.text)['ok']
+    if ok:
+    	return render_to_response("main.html",json.loads(r.text),context_instance=RequestContext(request, processors=[custom_processor]))
+    return render_to_response("main.html", {}, context_instance=RequestContext(request))
 
 def ride_detail(request, ride):
     r = requests.get('http://exp-api:8000/exp/ride_detail/' + str(ride))
@@ -40,6 +34,21 @@ def ride_detail(request, ride):
         "Destination": json.loads(r.text)['Destination'],
         },
     context_instance=RequestContext(request))
+
+def search(request):
+	r = requests.post('http://exp-api:8000/exp/search/', data={'query': request.GET['query']})
+	ok = json.loads(r.text)['ok']
+	if ok:
+		hits = json.loads(r.text)['results']['hits']
+		result_set = []
+		for ride in hits:
+			result_set.append(ride['_source'])
+		return render_to_response("search_results.html",
+			{'ok': True, 'hits': result_set},
+			context_instance=RequestContext(request))
+	return render_to_response("search_results.html",
+		{'ok': False},
+		context_instance=RequestContext(request))
 
 def login(request):
 	auth = request.COOKIES.get('auth')
@@ -76,6 +85,15 @@ def logout(request):
 	response = HttpResponseRedirect('/')
 	response.delete_cookie('auth')
 	return response
+
+def results(request):
+	if request.method != 'GET':
+		return render_to_response("results.html",{},context_instance=RequestContext(request, processors=[custom_processor]))
+	resp = requests.post('http://exp-api:8000/exp/search/', data={'query':'Culpepper'})
+	ok = json.loads(resp.text)['ok']
+	if not ok:
+		return render_to_response("results.html",{},context_instance=RequestContext(request, processors=[custom_processor]))
+	return render_to_response("results.html",json.loads(resp.text),context_instance=RequestContext(request, processors=[custom_processor]))
 
 def create_user(request):
 	auth = request.COOKIES.get('auth')
@@ -129,3 +147,34 @@ def create_vehicle(request):
 				context_instance=RequestContext(request))
 		return render_to_response("create_vehicle.html",
 			{'creation_form': creation_form, 'Response': "Vehicle succesfully added."})
+
+def create_ride(request):
+	auth = request.COOKIES.get('auth')
+	if not auth:
+		return HttpResponseRedirect('/v1/login/')
+	if request.method == 'GET':
+		creation_form = CreateRide()
+		return render_to_response("create_ride.html",
+			{'creation_form': creation_form},
+			context_instance=RequestContext(request))
+
+	else:
+		creation_form = CreateRide(request.POST)
+		if not creation_form.is_valid():
+			return render_to_response("create_ride.html",
+				{'creation_form': creation_form, 'Response': "Invalid Input. Please try again."},
+				context_instance=RequestContext(request))
+		
+		post_values = request.POST.copy()
+		post_values['auth'] = auth
+
+		resp = requests.post('http://exp-api:8000/exp/create_ride/', data=post_values)
+		#with open("outfile.txt","w") as f:
+		#	f.write(resp.text)
+		ok = json.loads(resp.text)['ok']
+		if not ok:
+			return render_to_response("create_ride.html",
+				{'creation_form': creation_form, 'Response': "There was an error while attempting to add the trip."},
+				context_instance=RequestContext(request))
+		return render_to_response("create_ride.html",
+			{'creation_form': creation_form, 'Response': "Trip succesfully added."})
